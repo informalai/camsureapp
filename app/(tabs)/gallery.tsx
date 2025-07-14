@@ -1,215 +1,141 @@
-import React, { useState, useEffect, useCallback } from 'react';
-import { View, Text, StyleSheet, TouchableOpacity, ScrollView, Image, TextInput, RefreshControl, Alert } from 'react-native';
+import React, { useEffect, useState } from 'react';
+import { View, Text, StyleSheet, Image, ActivityIndicator, SectionList, Modal, TouchableOpacity, ScrollView, TextInput, Platform } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
-import { Search, Grid, List, Trash2, Sticker, Calendar } from 'lucide-react-native';
-import { useFocusEffect } from '@react-navigation/native';
-import AppStorage, { PhotoMetadata, AppStorage as AppStorageClass } from '../../utils/storage';
+import * as FileSystem from 'expo-file-system';
+import { Brain, Image as ImageIcon, XCircle, Search, MapPin, Hash, Clock, Folder } from 'lucide-react-native';
+import DateTimePicker from '@react-native-community/datetimepicker';
 
-const FILTER_TABS = ['All', 'With Stickers', 'Recent'];
+export default function GalleryScreen() {
+  const [sections, setSections] = React.useState([]);
+  const [loading, setLoading] = React.useState(true);
+  const [resolving, setResolving] = React.useState(false);
+  const [selectedImage, setSelectedImage] = React.useState(null);
+  const [selectedProject, setSelectedProject] = React.useState('');
+  const [folderView, setFolderView] = React.useState(true); // true = show folders, false = show images in folder
 
-export default function GalleryTab() {
-  const [activeFilter, setActiveFilter] = useState('All');
-  const [searchQuery, setSearchQuery] = useState('');
-  const [viewMode, setViewMode] = useState<'grid' | 'list'>('grid');
-  const [photos, setPhotos] = useState<PhotoMetadata[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [refreshing, setRefreshing] = useState(false);
-  const [storageInfo, setStorageInfo] = useState({ totalPhotos: 0, totalSize: 0 });
-
-  const loadPhotos = async () => {
-    try {
-      const allPhotos = await AppStorage.getAllPhotos();
-      setPhotos(allPhotos);
-      
-      const info = await AppStorage.getStorageInfo();
-      setStorageInfo(info);
-    } catch (error) {
-      console.error('Error loading photos:', error);
-    } finally {
+  React.useEffect(() => {
+    const fetchImages = async () => {
+      setLoading(true);
+      const galleryRoot = FileSystem.documentDirectory + 'gallery/';
+      let sectionsData = [];
+      try {
+        const projectFolders = await FileSystem.readDirectoryAsync(galleryRoot).catch(() => []);
+        for (const project of projectFolders) {
+          const folder = galleryRoot + project + '/';
+          const files = await FileSystem.readDirectoryAsync(folder);
+          // Find all .jpg files and their .json metadata
+          const images = files.filter(f => f.endsWith('.jpg'));
+          const data = await Promise.all(images.map(async img => {
+            let meta = {};
+            try {
+              const metaStr = await FileSystem.readAsStringAsync(folder + img + '.json');
+              meta = JSON.parse(metaStr);
+            } catch {}
+            return {
+              id: folder + img,
+              uri: folder + img,
+              ...meta,
+              projectName: project,
+              creationTime: meta.timestamp ? new Date(meta.timestamp).getTime() / 1000 : null,
+            };
+          }));
+          if (data.length > 0) {
+            // Sort images by date descending
+            data.sort((a, b) => (b.creationTime || 0) - (a.creationTime || 0));
+            sectionsData.push({
+              title: project,
+              data,
+            });
+          }
+        }
+      } catch {}
+      setSections(sectionsData);
       setLoading(false);
-    }
-  };
+    };
+    setResolving(true);
+    fetchImages().then(() => setResolving(false));
+  }, []);
 
-  const onRefresh = async () => {
-    setRefreshing(true);
-    await loadPhotos();
-    setRefreshing(false);
-  };
+  // FOLDER LIST VIEW
+  const filteredFolders = sections;
+  // IMAGES IN SELECTED FOLDER
+  const selectedSection = sections.find(s => s.title === selectedProject);
+  const filteredImages = selectedSection ? selectedSection.data : [];
 
-  const deletePhoto = async (photoId: string) => {
-    Alert.alert(
-      'Delete Photo',
-      'Are you sure you want to delete this photo? This action cannot be undone.',
-      [
-        { text: 'Cancel', style: 'cancel' },
-        {
-          text: 'Delete',
-          style: 'destructive',
-          onPress: async () => {
-            const success = await AppStorage.deletePhoto(photoId);
-            if (success) {
-              await loadPhotos(); // Refresh the list
-            } else {
-              Alert.alert('Error', 'Failed to delete photo');
-            }
-          },
-        },
-      ]
-    );
-  };
-
-  const getFilteredPhotos = () => {
-    let filtered = photos;
-    
-    // Apply filter
-    switch (activeFilter) {
-      case 'With Stickers':
-        filtered = photos.filter(photo => photo.hasStickers);
-        break;
-      case 'Recent':
-        const oneDayAgo = Date.now() - 24 * 60 * 60 * 1000;
-        filtered = photos.filter(photo => photo.timestamp > oneDayAgo);
-        break;
-      default:
-        filtered = photos;
-    }
-    
-    // Apply search
-    if (searchQuery.trim()) {
-      filtered = filtered.filter(photo => 
-        AppStorageClass.formatDate(photo.timestamp).toLowerCase().includes(searchQuery.toLowerCase())
-      );
-    }
-    
-    return filtered;
-  };
-
-  useFocusEffect(
-    useCallback(() => {
-      loadPhotos();
-    }, [])
-  );
-
-  const filteredPhotos = getFilteredPhotos();
-
+  // Minimal folder grid
   return (
     <SafeAreaView style={styles.container}>
-      {/* Header */}
-      <View style={styles.header}>
-        <Text style={styles.headerTitle}>Gallery</Text>
-        <TouchableOpacity 
-          style={styles.viewToggle}
-          onPress={() => setViewMode(viewMode === 'grid' ? 'list' : 'grid')}
-        >
-          {viewMode === 'grid' ? (
-            <List size={24} color="#007AFF" />
-          ) : (
-            <Grid size={24} color="#007AFF" />
-          )}
-        </TouchableOpacity>
-      </View>
-
-      {/* Search Bar */}
-      <View style={styles.searchContainer}>
-        <View style={styles.searchBar}>
-          <Search size={20} color="#8E8E93" />
-          <TextInput
-            style={styles.searchInput}
-            placeholder="Search by date..."
-            placeholderTextColor="#8E8E93"
-            value={searchQuery}
-            onChangeText={setSearchQuery}
-          />
-        </View>
-      </View>
-
-      {/* Filter Tabs */}
-      <View style={styles.filterContainer}>
-        <ScrollView 
-          horizontal 
-          showsHorizontalScrollIndicator={false}
-          contentContainerStyle={styles.filterScrollContent}
-        >
-          {FILTER_TABS.map((filter) => (
-            <TouchableOpacity
-              key={filter}
-              style={[
-                styles.filterTab,
-                activeFilter === filter && styles.activeFilterTab
-              ]}
-              onPress={() => setActiveFilter(filter)}
-            >
-              <Text style={[
-                styles.filterTabText,
-                activeFilter === filter && styles.activeFilterTabText
-              ]}>
-                {filter}
-              </Text>
-            </TouchableOpacity>
-          ))}
-        </ScrollView>
-      </View>
-
-      {/* Photo Grid */}
-      <ScrollView 
-        style={styles.photosContainer} 
-        showsVerticalScrollIndicator={false}
-        refreshControl={
-          <RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor="#007AFF" />
-        }
-      >
-        {loading ? (
-          <View style={styles.loadingContainer}>
-            <Text style={styles.loadingText}>Loading photos...</Text>
-          </View>
-        ) : filteredPhotos.length === 0 ? (
-          <View style={styles.emptyContainer}>
-            <Calendar size={48} color="#8E8E93" />
-            <Text style={styles.emptyText}>No photos found</Text>
-            <Text style={styles.emptySubtext}>
-              {photos.length === 0 
-                ? 'Take some photos to see them here!' 
-                : 'Try adjusting your search or filter'}
-            </Text>
+      {loading || resolving ? (
+        <ActivityIndicator size="large" color="#3B82F6" style={{ marginTop: 40 }} />
+      ) : folderView ? (
+        filteredFolders.length === 0 ? (
+          <View style={styles.placeholderContainer}>
+            <Text style={styles.placeholderTitle}>No Projects</Text>
           </View>
         ) : (
-          <View style={styles.photosGrid}>
-            {filteredPhotos.map((photo) => (
-              <View key={photo.id} style={styles.photoContainer}>
-                <TouchableOpacity style={styles.photoItem}>
-                  <Image source={{ uri: photo.uri }} style={styles.photo} />
-                  {photo.hasStickers && (
-                    <View style={styles.stickerBadge}>
-                      <Sticker size={12} color="#FFF" />
-                      <Text style={styles.stickerCount}>{photo.stickerCount}</Text>
-                    </View>
-                  )}
-                </TouchableOpacity>
-                
-                <View style={styles.photoInfo}>
-                  <Text style={styles.photoDate}>{AppStorageClass.formatDate(photo.timestamp)}</Text>
-                  <TouchableOpacity 
-                    style={styles.deleteButton}
-                    onPress={() => deletePhoto(photo.id)}
-                  >
-                    <Trash2 size={16} color="#FF3B30" />
-                  </TouchableOpacity>
-                </View>
-              </View>
+          <View style={styles.folderGrid}>
+            {filteredFolders.map(folder => (
+              <TouchableOpacity
+                key={folder.title}
+                style={styles.folderCard}
+                onPress={() => { setSelectedProject(folder.title); setFolderView(false); }}
+                activeOpacity={0.8}
+              >
+                <Folder size={48} color="#3B82F6" style={{ marginBottom: 18 }} />
+                <Text style={styles.folderName}>{folder.title}</Text>
+                <Text style={styles.folderCount}>{folder.data.length} images</Text>
+              </TouchableOpacity>
             ))}
           </View>
-        )}
-      </ScrollView>
-
-      {/* Footer Stats */}
-      <View style={styles.footer}>
-        <Text style={styles.photoCount}>
-          {filteredPhotos.length} of {storageInfo.totalPhotos} photos
-        </Text>
-        <Text style={styles.storageSize}>
-          {AppStorageClass.formatFileSize(storageInfo.totalSize)}
-        </Text>
-      </View>
+        )
+      ) : (
+        <>
+          <TouchableOpacity style={styles.backButton} onPress={() => { setFolderView(true); setSelectedProject(''); }}>
+            <Text style={styles.backButtonText}>{'< Folders'}</Text>
+          </TouchableOpacity>
+          {filteredImages.length === 0 ? (
+            <View style={styles.placeholderContainer}>
+              <Text style={styles.placeholderTitle}>No Images</Text>
+            </View>
+          ) : (
+            <View style={styles.imageGrid}>
+              {filteredImages.map(item => (
+                <TouchableOpacity key={item.id} onPress={() => { setSelectedImage(item); }} activeOpacity={0.8}>
+                  <View style={styles.imageCard}>
+                    {item.uri ? (
+                      <>
+                        <Image source={{ uri: item.uri }} style={styles.image} />
+                        <View style={styles.stickerOverlay}>
+                          {item.projectName ? <Text style={styles.stickerText}>{item.projectName}</Text> : null}
+                          {item.ticket ? <Text style={styles.stickerText}>{item.ticket}</Text> : null}
+                          {item.timestamp ? <Text style={styles.stickerTextSmall}>{new Date(item.timestamp).toLocaleDateString()}</Text> : null}
+                        </View>
+                      </>
+                    ) : (
+                      <View style={[styles.image, { justifyContent: 'center', alignItems: 'center' }]}> 
+                        <ActivityIndicator size="small" color="#3B82F6" />
+                      </View>
+                    )}
+                  </View>
+                </TouchableOpacity>
+              ))}
+            </View>
+          )}
+        </>
+      )}
+      {/* Minimal image detail modal */}
+      {selectedImage && (
+        <Modal visible transparent animationType="fade" onRequestClose={() => setSelectedImage(null)}>
+          <View style={styles.detailModalOverlay}>
+            <View style={styles.detailModalContent}>
+              <TouchableOpacity style={styles.detailCloseButton} onPress={() => setSelectedImage(null)}>
+                <XCircle size={28} color="#fff" />
+              </TouchableOpacity>
+              <Image source={{ uri: selectedImage.uri }} style={styles.detailImage} resizeMode="contain" />
+            </View>
+          </View>
+        </Modal>
+      )}
     </SafeAreaView>
   );
 }
@@ -217,167 +143,144 @@ export default function GalleryTab() {
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: '#000',
+    backgroundColor: '#F9FAFB',
   },
-  header: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    paddingHorizontal: 20,
-    paddingVertical: 15,
-  },
-  headerTitle: {
-    fontSize: 28,
-    fontWeight: '700',
-    color: '#FFF',
-  },
-  viewToggle: {
-    padding: 8,
-  },
-  searchContainer: {
-    paddingHorizontal: 20,
-    paddingBottom: 15,
-  },
-  searchBar: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    backgroundColor: '#1C1C1E',
-    borderRadius: 12,
-    paddingHorizontal: 16,
-    paddingVertical: 12,
-  },
-  searchInput: {
-    flex: 1,
-    marginLeft: 12,
-    fontSize: 16,
-    color: '#FFF',
-  },
-  filterContainer: {
-    paddingBottom: 20,
-  },
-  filterScrollContent: {
-    paddingHorizontal: 20,
-  },
-  filterTab: {
-    paddingHorizontal: 20,
-    paddingVertical: 8,
-    borderRadius: 20,
-    backgroundColor: '#1C1C1E',
-    marginRight: 12,
-  },
-  activeFilterTab: {
-    backgroundColor: '#007AFF',
-  },
-  filterTabText: {
-    fontSize: 16,
-    fontWeight: '500',
-    color: '#8E8E93',
-  },
-  activeFilterTabText: {
-    color: '#FFF',
-  },
-  photosContainer: {
-    flex: 1,
-    paddingHorizontal: 20,
-  },
-  photosGrid: {
+  folderGrid: {
     flexDirection: 'row',
     flexWrap: 'wrap',
-    justifyContent: 'space-between',
-  },
-  photoContainer: {
-    width: '31%',
-    marginBottom: 16,
-  },
-  photoItem: {
-    width: '100%',
-    aspectRatio: 1,
-    borderRadius: 8,
-    overflow: 'hidden',
-    position: 'relative',
-  },
-  photo: {
-    width: '100%',
-    height: '100%',
-    backgroundColor: '#1C1C1E',
-  },
-  stickerBadge: {
-    position: 'absolute',
-    top: 4,
-    right: 4,
-    backgroundColor: 'rgba(0, 122, 255, 0.8)',
-    borderRadius: 10,
-    paddingHorizontal: 6,
-    paddingVertical: 2,
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 2,
-  },
-  stickerCount: {
-    color: '#FFF',
-    fontSize: 10,
-    fontWeight: '600',
-  },
-  photoInfo: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    marginTop: 4,
-  },
-  photoDate: {
-    fontSize: 10,
-    color: '#8E8E93',
-    flex: 1,
-  },
-  deleteButton: {
-    padding: 4,
-  },
-  loadingContainer: {
-    flex: 1,
     justifyContent: 'center',
+    padding: 8,
+    gap: 12,
+  },
+  folderCard: {
+    backgroundColor: '#fff',
+    borderRadius: 14,
+    paddingVertical: 18,
+    paddingHorizontal: 14,
+    margin: 8,
     alignItems: 'center',
+    elevation: 2,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.08,
+    shadowRadius: 4,
+    minWidth: 90,
+    minHeight: 90,
+    maxWidth: 110,
+  },
+  folderName: {
+    fontSize: 14,
+    fontWeight: '700',
+    color: '#3B82F6',
+    marginBottom: 4,
+    textAlign: 'center',
+  },
+  folderCount: {
+    fontSize: 11,
+    color: '#6B7280',
+    textAlign: 'center',
+  },
+  imageGrid: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    justifyContent: 'center',
+    padding: 10,
+    gap: 16,
+  },
+  imageCard: {
+    backgroundColor: '#fff',
+    borderRadius: 14,
+    margin: 8,
+    elevation: 2,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.08,
+    shadowRadius: 4,
+    alignItems: 'center',
+    width: 140,
+    height: 140,
+    overflow: 'hidden',
+  },
+  image: {
+    width: 140,
+    height: 140,
+    borderRadius: 14,
+  },
+  placeholderContainer: {
+    flex: 1,
+    alignItems: 'center',
+    justifyContent: 'center',
     paddingVertical: 40,
   },
-  loadingText: {
-    color: '#8E8E93',
-    fontSize: 16,
-  },
-  emptyContainer: {
-    flex: 1,
-    justifyContent: 'center',
-    alignItems: 'center',
-    paddingVertical: 60,
-    paddingHorizontal: 40,
-  },
-  emptyText: {
-    color: '#FFF',
-    fontSize: 18,
+  placeholderTitle: {
+    fontSize: 20,
     fontWeight: '600',
+    color: '#9CA3AF',
     marginTop: 16,
     marginBottom: 8,
   },
-  emptySubtext: {
-    color: '#8E8E93',
-    fontSize: 14,
-    textAlign: 'center',
-    lineHeight: 20,
+  backButton: {
+    marginLeft: 16,
+    marginBottom: 8,
+    marginTop: 4,
   },
-  footer: {
-    paddingHorizontal: 20,
-    paddingVertical: 15,
-    borderTopWidth: 1,
-    borderTopColor: '#1C1C1E',
-    flexDirection: 'row',
-    justifyContent: 'space-between',
+  backButtonText: {
+    color: '#2563EB',
+    fontSize: 16,
+    fontWeight: '600',
+  },
+  detailModalOverlay: {
+    flex: 1,
+    backgroundColor: 'rgba(0,0,0,0.85)',
+    justifyContent: 'center',
     alignItems: 'center',
+    padding: 24,
   },
-  photoCount: {
-    fontSize: 14,
-    color: '#8E8E93',
+  detailModalContent: {
+    backgroundColor: '#222',
+    borderRadius: 18,
+    padding: 16,
+    width: '100%',
+    maxWidth: 400,
+    alignItems: 'center',
+    elevation: 8,
   },
-  storageSize: {
-    fontSize: 14,
-    color: '#8E8E93',
-    fontWeight: '500',
+  detailCloseButton: {
+    position: 'absolute',
+    top: 12,
+    right: 12,
+    zIndex: 10,
   },
-});
+  detailImage: {
+    width: 300,
+    height: 300,
+    borderRadius: 12,
+    marginTop: 32,
+    marginBottom: 16,
+    backgroundColor: '#111',
+  },
+  stickerOverlay: {
+    position: 'absolute',
+    top: 6,
+    left: 6,
+    backgroundColor: 'rgba(0,0,0,0.55)',
+    borderRadius: 8,
+    paddingVertical: 3,
+    paddingHorizontal: 7,
+    zIndex: 10,
+    minWidth: 50,
+    alignItems: 'flex-start',
+  },
+  stickerText: {
+    color: '#fff',
+    fontSize: 11,
+    fontWeight: '700',
+    marginBottom: 1,
+  },
+  stickerTextSmall: {
+    color: '#fff',
+    fontSize: 9,
+    fontWeight: '400',
+    opacity: 0.8,
+  },
+}); 
