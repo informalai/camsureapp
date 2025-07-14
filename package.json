@@ -12,7 +12,8 @@
     "build:all": "eas build --platform all",
     "preview": "expo start --tunnel",
     "lint": "expo lint",
-    "type-check": "tsc --noEmit"
+    "type-check": "tsc --noEmit",
+    "build": "expo export --platform web"
   },
   "dependencies": {
     "@expo/vector-icons": "^14.1.0",
