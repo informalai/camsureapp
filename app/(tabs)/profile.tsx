@@ -405,7 +405,7 @@ const styles = StyleSheet.create({
   },
   appInfoText: {
     fontSize: 12,
-    color: '#9CA3AF',
+    color: '#374151',
     marginBottom: 4,
   },
 }); 

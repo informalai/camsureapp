@@ -7,10 +7,12 @@ import * as FileSystem from 'expo-file-system';
 import * as Location from 'expo-location';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Camera as CameraIcon, Folder, Hash, CheckCircle, MapPin, Clock } from 'lucide-react-native';
+import { useRouter } from 'expo-router';
 
 const { width, height } = Dimensions.get('window');
 
 export default function CameraScreen() {
+  const router = useRouter();
   const [facing, setFacing] = React.useState<'front' | 'back'>('back');
   const [permission, requestPermission] = useCameraPermissions();
   const [isCapturing, setIsCapturing] = React.useState(false);
@@ -50,26 +52,20 @@ export default function CameraScreen() {
       setIsCapturing(true);
       const photo = await cameraRef.current?.takePictureAsync({ quality: 0.8 });
       if (photo) {
-        // Save to private app folder
-        const folder = `${FileSystem.documentDirectory}gallery/${projectName}/`;
-        await FileSystem.makeDirectoryAsync(folder, { intermediates: true }).catch(() => {});
-        const fileName = `IMG_${Date.now()}.jpg`;
-        const dest = folder + fileName;
-        await FileSystem.copyAsync({ from: photo.uri, to: dest });
-        // Save metadata
-        const meta = {
-          project: projectName,
-          ticket: ticketNumber,
-          timestamp: new Date().toISOString(),
-          location: location ? {
-            latitude: location.coords.latitude,
-            longitude: location.coords.longitude
-          } : null,
-          image: fileName
-        };
-        await FileSystem.writeAsStringAsync(folder + fileName + '.json', JSON.stringify(meta));
-        setLastPhotoUri(dest);
-        setShowViewModal(true);
+        // Navigate to CameraPreview instead of showing modal
+        router.push({
+          pathname: '/CameraPreview',
+          params: {
+            photoUri: photo.uri,
+            location: location ? JSON.stringify({
+              latitude: location.coords.latitude,
+              longitude: location.coords.longitude
+            }) : null,
+            timestamp: new Date().toISOString(),
+            projectName: projectName,
+            ticketNumber: ticketNumber
+          }
+        });
       }
     } catch (error) {
       Alert.alert('Error', 'Failed to capture photo.');
@@ -139,17 +135,11 @@ export default function CameraScreen() {
         </View>
       </View>
       {/* Project and Ticket selection buttons */}
+      
       <View style={styles.selectionRow}>
         <TouchableOpacity style={styles.selectionButton} onPress={() => setShowProjectInput(true)}>
           <Folder size={24} color="#3B82F6" />
-          <Text style={styles.selectionText}>{projectName ? projectName : 'Project'}</Text>
         </TouchableOpacity>
-        <TouchableOpacity style={styles.selectionButton} onPress={() => setShowTicketInput(true)}>
-          <Hash size={24} color="#3B82F6" />
-          <Text style={styles.selectionText}>{ticketNumber ? ticketNumber : 'Ticket #'}</Text>
-        </TouchableOpacity>
-      </View>
-      <View style={[styles.bottomControls, { bottom: 100 }]}>
         <TouchableOpacity
           style={styles.captureButton}
           onPress={takePicture}
@@ -157,19 +147,11 @@ export default function CameraScreen() {
         >
           <CameraIcon size={32} color="#FFFFFF" />
         </TouchableOpacity>
+        <TouchableOpacity style={styles.selectionButton} onPress={() => setShowTicketInput(true)}>
+          <Hash size={24} color="#3B82F6" />
+        </TouchableOpacity>
       </View>
-      {/* View? prompt after snap */}
-      {lastPhotoUri && showViewModal && (
-        <View style={styles.viewPromptContainer}>
-          <Text style={styles.viewPromptText}>View?</Text>
-          <TouchableOpacity style={styles.viewPromptButton} onPress={() => setShowViewModal(false)}>
-            <Text style={styles.viewPromptButtonText}>Close</Text>
-          </TouchableOpacity>
-          <View style={styles.viewImageModal}>
-            <Image source={{ uri: lastPhotoUri }} style={styles.viewImage} resizeMode="contain" />
-          </View>
-        </View>
-      )}
+      
       {/* Project input modal */}
       <Modal visible={showProjectInput} transparent animationType="fade">
         <View style={styles.inputOverlay}>
